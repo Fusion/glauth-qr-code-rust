@@ -251,8 +251,8 @@ fn w_onboardonce(token: String) -> Template {
     }
 }
 
-fn run_server(_: &ArgMatches, parent_logger: &slog::Logger) {
-    let _log = parent_logger.new(o!("command" => "secret"));
+fn run_server(_: &ArgMatches, parentlogger: &slog::Logger) {
+    let _log = parentlogger.new(o!("command" => "secret"));
 
     rocket::ignite()
         .mount("/", routes![w_invite, w_onboard, w_onboardonce])
@@ -260,15 +260,15 @@ fn run_server(_: &ArgMatches, parent_logger: &slog::Logger) {
         .launch();
 }
 
-fn encode_user_secret(matches: &ArgMatches, parent_logger: &slog::Logger) {
-    let _log = parent_logger.new(o!("command" => "secret"));
+fn encode_user_secret(matches: &ArgMatches, parentlogger: &slog::Logger) {
+    let log = parentlogger.new(o!("command" => "secret"));
     let enc_otp = BASE32.encode(random_string(10).as_bytes());
 
     if let Some(account) = matches.value_of("account") {
-        debug!(_log, "encoding_secret"; "account" => account);
+        debug!(log, "encoding_secret"; "account" => account);
         match read_config() {
             Err(_) => {
-                debug!(_log, "error_reading_config");
+                debug!(log, "error_reading_config");
                 println!("Error reading config");
             }
             Ok(config) => {
@@ -276,24 +276,24 @@ fn encode_user_secret(matches: &ArgMatches, parent_logger: &slog::Logger) {
             }
         }
     } else {
-        debug!(_log, "encoding_secret");
+        debug!(log, "encoding_secret");
         println!("Here is a possible configuration for a LDAP TOTP user:");
         println!("  otpsecret = {}", enc_otp);
     }
 }
 
-fn encode_user_password(matches: &ArgMatches, parent_logger: &slog::Logger) {
-    let _log = parent_logger.new(o!("command" => "pass"));
+fn encode_user_password(matches: &ArgMatches, parentlogger: &slog::Logger) {
+    let log = parentlogger.new(o!("command" => "pass"));
     let pass = matches.value_of("password").unwrap();
     let mut sha = Sha256::new();
     sha.input_str(pass);
     let enc_pass = sha.result_str();
 
     if let Some(account) = matches.value_of("account") {
-        debug!(_log, "encoding_pass"; "account" => account);
+        debug!(log, "encoding_pass"; "account" => account);
         match read_config() {
             Err(_) => {
-                debug!(_log, "error_reading_config");
+                debug!(log, "error_reading_config");
                 println!("Error reading config");
             }
             Ok(config) => {
@@ -301,7 +301,7 @@ fn encode_user_password(matches: &ArgMatches, parent_logger: &slog::Logger) {
             }
         }
     } else {
-        debug!(_log, "encoding_pass");
+        debug!(log, "encoding_pass");
         println!("Here is a possible configuration for a LDAP user:");
         println!("  passsha256 = {}", enc_pass);
     }
@@ -316,7 +316,7 @@ fn main() {
         .open(log_path)
         .unwrap();
 
-    let _log = slog::Logger::root(
+    let log = slog::Logger::root(
         slog_async::Async::new(
             slog_term::FullFormat::new(slog_term::PlainDecorator::new(file))
                 .build()
@@ -327,7 +327,7 @@ fn main() {
         o!(),
     );
 
-    debug!(_log, "main()");
+    debug!(log, "main()");
 
     let matches = clap::App::new("glauth thingy")
         .version("0.1.0")
@@ -367,11 +367,11 @@ fn main() {
         .get_matches();
 
     match matches.subcommand() {
-        ("serve", Some(m)) => run_server(m, &_log),
-        ("secret", Some(m)) => encode_user_secret(m, &_log),
-        ("pass", Some(m)) => encode_user_password(m, &_log),
+        ("serve", Some(m)) => run_server(m, &log),
+        ("secret", Some(m)) => encode_user_secret(m, &log),
+        ("pass", Some(m)) => encode_user_password(m, &log),
         (_, _) => println!("Try 'help'"),
     }
 
-    debug!(_log, "the end");
+    debug!(log, "the end");
 }
