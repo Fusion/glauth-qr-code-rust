@@ -137,10 +137,6 @@ fn patch_user_pass(mut src: Config, account: &str, enc_pass: &str) -> Config {
     src
 }
 
-pub struct Invite {
-    account: String,
-}
-
 fn info_to_link(qr_type: &str, qr_issuer: &str, qr_account: &str, qr_secret: &str) -> String {
     let link = format!(
         "otpauth://{}/{}:{}?secret={}&issuer={}",
@@ -215,7 +211,7 @@ fn w_onboardonce(token: String) -> Template {
         &[&clean_token],
         |row| row.get(0),
     ) {
-        Err(err) => {
+        Err(_err) => {
             // TODO: Log
             context.insert(
                 "ErrorMsg",
@@ -230,10 +226,7 @@ fn w_onboardonce(token: String) -> Template {
                 .users
                 .iter()
                 .filter(|&user| user.name == account)
-                .filter(|&user| match (user.otpsecret) {
-                    Some(ref otpsecret) => true,
-                    None => false,
-                })
+                .filter(|&user| user.otpsecret.is_some())
                 .collect::<Vec<&Users>>();
             if info.is_empty() {
                 context.insert(
