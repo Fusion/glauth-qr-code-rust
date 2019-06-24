@@ -1,33 +1,21 @@
 #![feature(proc_macro_hygiene, decl_macro)]
-extern crate clap;
-extern crate serde;
-extern crate serde_derive;
-#[macro_use]
-extern crate slog;
-extern crate crypto;
-extern crate data_encoding;
-extern crate rand;
-extern crate slog_async;
-extern crate slog_term;
-#[macro_use]
-extern crate rocket;
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
 
 use clap::{Arg, ArgMatches, SubCommand};
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use data_encoding::{BASE32, BASE64};
 use image::{png, ColorType, Luma};
+use lazy_static::lazy_static;
 use qrcode::QrCode;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 use regex::Regex;
+use rocket::{get, routes};
 use rocket_contrib::templates::Template;
 use rusqlite::{Connection, NO_PARAMS};
 use serde_derive::{Deserialize, Serialize};
 use slog::Drain;
+use slog::{debug, o};
 use std::collections::HashMap;
 use std::fs::{read_to_string, write, OpenOptions};
 use std::io::BufWriter;
