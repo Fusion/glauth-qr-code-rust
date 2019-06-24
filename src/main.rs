@@ -18,7 +18,6 @@ use slog::Drain;
 use slog::{debug, o};
 use std::collections::HashMap;
 use std::fs::{read_to_string, write, OpenOptions};
-use std::io::BufWriter;
 use uuid::Uuid;
 
 static HOME_URL: &str = "http://localhost:8000";
@@ -210,42 +209,37 @@ fn w_onboardonce(token: String) -> Template {
         Ok(account) => {
             let config: Config = read_config().unwrap();
 
-            let info = config
+            let secret = config
                 .users
                 .iter()
-                .filter(|&user| user.name == account)
-                .filter(|&user| user.otpsecret.is_some())
-                .collect::<Vec<&Users>>();
-            if info.is_empty() {
-                context.insert(
-                    "ErrorMsg",
-                    "There is no secret available for this user name.".to_string(),
-                );
-                Template::render("error", &context)
-            } else {
-                let secret = info[0].otpsecret.as_ref().unwrap();
-                let code =
-                    QrCode::new(info_to_link(AUTH_TYPE, ISSUER_NAME, &account, secret)).unwrap();
-                let image = code.render::<Luma<u8>>().build();
-                let mut s = String::new();
-                // Note to self:
-                // This is one way to allow myself to borrow the string's content again.
-                // If I did not create a new scope, we would have:
-                // Encoder -(owns)-> fout -(owns)-> s buffer.
-                // I hope I learn how to do this better.
-                {
-                    let fout = &mut BufWriter::new(unsafe { s.as_mut_vec() });
-                    png::PNGEncoder::new(fout)
+                .filter(|user| user.name == account)
+                .find_map(|user| user.otpsecret.as_ref());
+
+            match secret {
+                None => {
+                    context.insert(
+                        "ErrorMsg",
+                        "There is no secret available for this user name.".to_string(),
+                    );
+                    Template::render("error", &context)
+                }
+                Some(secret) => {
+                    let code = QrCode::new(info_to_link(AUTH_TYPE, ISSUER_NAME, &account, secret))
+                        .unwrap();
+                    let image = code.render::<Luma<u8>>().build();
+
+                    let mut buf = Vec::new();
+                    png::PNGEncoder::new(&mut buf)
                         .encode(&image, image.width(), image.height(), ColorType::Gray(8))
                         .unwrap();
+                    let enc_img = BASE64.encode(&buf);
+
+                    conn.execute("UPDATE invitees SET used=1 WHERE token=?", &[&clean_token])
+                        .unwrap();
+
+                    context.insert("Img", enc_img);
+                    Template::render("onboardonce", &context)
                 }
-                let enc_img = BASE64.encode(unsafe { s.as_bytes_mut() });
-
-                conn.execute("UPDATE invitees SET used=1 WHERE token=?", &[&clean_token])
-                    .unwrap();
-
-                context.insert("Img", enc_img);
-                Template::render("onboardonce", &context)
             }
         }
     }
