@@ -6,6 +6,7 @@ use crypto::sha2::Sha256;
 use data_encoding::{BASE32, BASE64};
 use image::{png, ColorType, Luma};
 use lazy_static::lazy_static;
+use maplit::hashmap;
 use qrcode::QrCode;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
@@ -16,7 +17,6 @@ use rusqlite::{Connection, NO_PARAMS};
 use serde_derive::{Deserialize, Serialize};
 use slog::Drain;
 use slog::{debug, o};
-use std::collections::HashMap;
 use std::fs::{read_to_string, write, OpenOptions};
 use uuid::Uuid;
 
@@ -170,17 +170,17 @@ fn w_invite(account: String) -> Template {
     )
     .unwrap();
 
-    let mut context = HashMap::new();
-    context.insert("Account", clean_account);
-    context.insert("Link", format!("{}/onboard/{}", HOME_URL, token));
-    Template::render("invite", &context)
+    Template::render("invite", hashmap!{
+        "Account" => clean_account,
+        "Link" => format!("{}/onboard/{}", HOME_URL, token),
+    })
 }
 
 #[get("/onboard/<token>")]
 fn w_onboard(token: String) -> Template {
-    let mut context = HashMap::new();
-    context.insert("Link", format!("{}/onboardonce/{}", HOME_URL, token));
-    Template::render("onboard", &context)
+    Template::render("onboard", hashmap!{
+        "Link" => format!("{}/onboardonce/{}", HOME_URL, token),
+    })
 }
 
 #[get("/onboardonce/<token>")]
@@ -190,8 +190,6 @@ fn w_onboardonce(token: String) -> Template {
     }
     let clean_token = CLEAN_PATTERN.replace(&token, "").to_string();
 
-    let mut context = HashMap::new();
-
     let conn = Connection::open("./data/invites.db").unwrap();
     match conn.query_row::<String, _, _>(
         "SELECT account FROM invitees WHERE token=? AND used=0",
@@ -200,11 +198,9 @@ fn w_onboardonce(token: String) -> Template {
     ) {
         Err(_err) => {
             // TODO: Log
-            context.insert(
-                "ErrorMsg",
-                "This invite does not exist and this transaction was logged.".to_string(),
-            );
-            Template::render("error", &context)
+            Template::render("error", hashmap!{
+                "ErrorMsg" => "This invite does not exist and this transaction was logged.",
+            })
         }
         Ok(account) => {
             let config: Config = read_config().unwrap();
@@ -217,11 +213,9 @@ fn w_onboardonce(token: String) -> Template {
 
             match secret {
                 None => {
-                    context.insert(
-                        "ErrorMsg",
-                        "There is no secret available for this user name.".to_string(),
-                    );
-                    Template::render("error", &context)
+                    Template::render("error", hashmap!{
+                        "ErrorMsg" => "There is no secret available for this user name.",
+                    })
                 }
                 Some(secret) => {
                     let code = QrCode::new(info_to_link(AUTH_TYPE, ISSUER_NAME, &account, secret))
@@ -237,8 +231,9 @@ fn w_onboardonce(token: String) -> Template {
                     conn.execute("UPDATE invitees SET used=1 WHERE token=?", &[&clean_token])
                         .unwrap();
 
-                    context.insert("Img", enc_img);
-                    Template::render("onboardonce", &context)
+                    Template::render("onboardonce", hashmap!{
+                        "Img" => enc_img,
+                    })
                 }
             }
         }
