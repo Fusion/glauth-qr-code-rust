@@ -12,7 +12,7 @@ use regex::Regex;
 use rocket::{get, routes};
 use rocket_contrib::templates::Template;
 use rusqlite::{Connection, NO_PARAMS};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use slog::{debug, o, Drain};
 use std::fs::{read_to_string, write, OpenOptions};
 use uuid::Uuid;
