@@ -21,9 +21,9 @@ use std::fs::{read_to_string, write, OpenOptions};
 use std::io::BufWriter;
 use uuid::Uuid;
 
-static HOME_URL: &'static str = "http://localhost:8000";
-static AUTH_TYPE: &'static str = "totp";
-static ISSUER_NAME: &'static str = "VwbLab";
+static HOME_URL: &str = "http://localhost:8000";
+static AUTH_TYPE: &str = "totp";
+static ISSUER_NAME: &str = "VwbLab";
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 struct Config {
