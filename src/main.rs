@@ -85,40 +85,34 @@ fn random_string(size: usize) -> String {
         .collect::<String>()
 }
 
-fn read_config() -> Result<Config, &'static str> {
-    match read_to_string("cfr.cfg") {
-        Ok(str) => {
-            // How do I make this trait consistent with clean error handling?
-            let config: Config = toml::from_str(&str).unwrap();
-            Ok(config)
-        }
-        Err(_) => Err("Error opening config"),
+impl Config {
+    fn read() -> Result<Config, &'static str> {
+        let s = read_to_string("cfr.cfg").map_err(|_| "Error opening config")?;
+        toml::from_str(&s).map_err(|_| "Error parsing config")
     }
-}
 
-fn write_config(config: Config) {
-    match write("cfr.cfg", toml::to_string(&config).unwrap()) {
-        Err(err) => println!("ERR: {:?}", err),
-        _ => println!("OK"),
-    }
-}
-
-fn patch_user_secret(mut src: Config, account: &str, enc_otp: &str) -> Config {
-    for user in src.users.iter_mut() {
-        if user.name == account {
-            user.otpsecret = Some(enc_otp.to_string());
+    fn write(&self) {
+        match write("cfr.cfg", toml::to_string(self).unwrap()) {
+            Err(err) => println!("ERR: {:?}", err),
+            _ => println!("OK"),
         }
     }
-    src
-}
 
-fn patch_user_pass(mut src: Config, account: &str, enc_pass: &str) -> Config {
-    for user in src.users.iter_mut() {
-        if user.name == account {
-            user.passsha256 = enc_pass.to_string();
+    fn patch_user_secret(&mut self, account: &str, enc_otp: &str) {
+        for user in self.users.iter_mut() {
+            if user.name == account {
+                user.otpsecret = Some(enc_otp.to_string());
+            }
         }
     }
-    src
+
+    fn patch_user_pass(&mut self, account: &str, enc_pass: &str) {
+        for user in self.users.iter_mut() {
+            if user.name == account {
+                user.passsha256 = enc_pass.to_string();
+            }
+        }
+    }
 }
 
 fn info_to_link(qr_type: &str, qr_issuer: &str, qr_account: &str, qr_secret: &str) -> String {
@@ -209,7 +203,7 @@ fn w_onboardonce(token: String) -> Template {
             )
         }
         Ok(account) => {
-            let config: Config = read_config().unwrap();
+            let config = Config::read().unwrap();
 
             let secret = config
                 .users
@@ -265,13 +259,14 @@ fn encode_user_secret(matches: &ArgMatches, parentlogger: &slog::Logger) {
 
     if let Some(account) = matches.value_of("account") {
         debug!(log, "encoding_secret"; "account" => account);
-        match read_config() {
+        match Config::read() {
             Err(_) => {
                 debug!(log, "error_reading_config");
                 println!("Error reading config");
             }
-            Ok(config) => {
-                write_config(patch_user_secret(config, account, &enc_otp));
+            Ok(mut config) => {
+                config.patch_user_secret(account, &enc_otp);
+                config.write();
             }
         }
     } else {
@@ -290,13 +285,14 @@ fn encode_user_password(matches: &ArgMatches, parentlogger: &slog::Logger) {
 
     if let Some(account) = matches.value_of("account") {
         debug!(log, "encoding_pass"; "account" => account);
-        match read_config() {
+        match Config::read() {
             Err(_) => {
                 debug!(log, "error_reading_config");
                 println!("Error reading config");
             }
-            Ok(config) => {
-                write_config(patch_user_pass(config, account, &enc_pass));
+            Ok(mut config) => {
+                config.patch_user_pass(account, &enc_pass);
+                config.write();
             }
         }
     } else {
