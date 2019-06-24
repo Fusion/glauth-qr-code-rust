@@ -1,11 +1,9 @@
-cargo-features = ["edition"]
-
 [package]
-edition = "2018"
-
-name = "hello_world"
+name = "glauth_qr_code_rust"
 version = "0.0.1"
-authors = [ "Your name <you@example.com>" ]
+authors = ["Your name <you@example.com>"]
+readme = "README.md"
+edition = "2018"
 
 [dependencies]
 serde = "1.0"
