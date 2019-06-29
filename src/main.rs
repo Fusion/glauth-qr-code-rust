@@ -34,6 +34,7 @@ static HOME_URL: &'static str = "http://localhost:8000";
 static AUTH_TYPE: &'static str = "totp";
 static ISSUER_NAME: &'static str = "VwbLab";
 
+lazy_static! { static ref CLEAN_PATTERN: Regex = Regex::new("[^a-zA-Z0-9-_]+").unwrap(); }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 struct Config {
@@ -100,14 +101,9 @@ fn random_string(size: usize) -> String {
 }
 
 fn read_config() -> Result<Config, &'static str> {
-    match read_to_string("cfr.cfg") {
-        Ok(str) => {
-            // How do I make this trait consistent with clean error handling?
-            let config: Config = toml::from_str(&str).unwrap();
-            Ok(config)
-        },
-        Err(_) => Err("Error opening config")
-    }
+    let str = read_to_string("cfr.cfg").map_err(|_| "Error opening config")?;
+    let config: Config = toml::from_str(&str).map_err(|_| "Error parsing config")?;
+    Ok(config)
 }
 
 fn write_config(config: Config) {
@@ -135,10 +131,6 @@ fn patch_user_pass(mut src: Config, account: &str, enc_pass: &str) -> Config {
     src
 }
 
-pub struct Invite {
-    account: String,
-}
-
 fn info_to_link(
     qr_type: &str,
     qr_issuer: &str,
@@ -156,7 +148,6 @@ fn info_to_link(
 
 #[get("/invite/<account>")]
 fn w_invite(account: String) -> Template {
-    lazy_static! { static ref CLEAN_PATTERN: Regex = Regex::new("[^a-zA-Z0-9-_]+").unwrap(); }
     let clean_account = CLEAN_PATTERN.replace(&account, "").to_string();
 
     let conn = Connection::open("./data/invites.db").unwrap();
@@ -192,7 +183,6 @@ fn w_onboard(token: String) -> Template {
 
 #[get("/onboardonce/<token>")]
 fn w_onboardonce(token: String) -> Template {
-    lazy_static! { static ref CLEAN_PATTERN: Regex = Regex::new("[^a-zA-Z0-9-_]+").unwrap(); }
     let clean_token = CLEAN_PATTERN.replace(&token, "").to_string();
 
     let mut context = HashMap::new();
@@ -203,7 +193,7 @@ fn w_onboardonce(token: String) -> Template {
         &[&clean_token],
         |row| row.get(0)
     ) {
-        Err(err) => {
+        Err(_) => {
             // TODO: Log
             context.insert("ErrorMsg", "This invite does not exist and this transaction was logged.".to_string());
             Template::render("error", &context)
@@ -213,8 +203,8 @@ fn w_onboardonce(token: String) -> Template {
 
             let info = config.users.iter().filter(
                 |&user| user.name == account ).filter(
-                |&user| match(user.otpsecret) {
-                    Some(ref otpsecret) => true,
+                |&user| match user.otpsecret {
+                    Some(ref _otpsecret) => true,
                     None => false
                 }).collect::<Vec<&Users>>();
             if info.is_empty() {
