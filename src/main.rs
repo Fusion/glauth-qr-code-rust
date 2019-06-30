@@ -12,11 +12,13 @@ extern crate crypto;
 #[macro_use] extern crate lazy_static;
 extern crate regex;
 
+use froop::{Sink, Stream}; // Lightweight but fully synchronous
 use std::collections::HashMap;
 use serde_derive::{Serialize, Deserialize};
 use clap::{Arg, ArgMatches, SubCommand};
 use std::fs::{OpenOptions, read_to_string, write};
 use std::io::BufWriter;
+use std::io::Write;
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use data_encoding::{BASE32, BASE64};
@@ -35,6 +37,68 @@ static AUTH_TYPE: &'static str = "totp";
 static ISSUER_NAME: &'static str = "VwbLab";
 
 lazy_static! { static ref CLEAN_PATTERN: Regex = Regex::new("[^a-zA-Z0-9-_]+").unwrap(); }
+
+lazy_static! {
+    static ref LOG: slog::Logger = slog::Logger::root(
+        slog_async::Async::new(
+                slog_term::FullFormat::new(
+                        slog_term::PlainDecorator::new(
+                            OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .truncate(true)
+                                .open("my.log")
+                                .unwrap()
+                            )
+                    ).build().fuse()
+            ).build().fuse(),
+        o!()
+    );
+}
+
+//░░░█▀█░█▀█░▀█▀░█▀▀░█▀▀░░
+//░░░█░█░█░█░░█░░█▀▀░▀▀█░░
+//░░░▀░▀░▀▀▀░░▀░░▀▀▀░▀▀▀░░
+
+enum NoteCat {
+    Debug,
+    Warn,
+}
+
+enum NoteCtx {
+    Log(String),
+}
+
+struct NoteData {
+    cat: NoteCat,
+    content: String,
+    ctx: Option<NoteCtx>,
+}
+
+lazy_static! { static ref SINK: Sink<NoteData> = Stream::sink(); }
+
+macro_rules! make_note {
+    ($cat:expr, $content:expr) => {{
+        SINK.update(NoteData{cat: $cat, content: $content.to_string(), ctx: None});
+    }};
+}
+
+macro_rules! make_note_ctx {
+    ($cat:expr, $content:expr, $ctx:expr) => {{
+        SINK.update(NoteData{cat: $cat, content: $content.to_string(), ctx: Some($ctx)});
+    }};
+}
+
+macro_rules! complain {
+    ($msg:expr) => {{
+        make_note!(NoteCat::Debug, $msg);
+        println!("{}", $msg);
+    }};
+}
+
+//░░░█▀▀░█▀█░█▀█░█▀▀░▀█▀░█▀▀░░
+//░░░█░░░█░█░█░█░█▀▀░░█░░█░█░░
+//░░░▀▀▀░▀▀▀░▀░▀░▀░░░▀▀▀░▀▀▀░░
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 struct Config {
@@ -100,17 +164,25 @@ fn random_string(size: usize) -> String {
         .collect::<String>()
 }
 
-fn read_config() -> Result<Config, &'static str> {
-    let str = read_to_string("cfr.cfg").map_err(|_| "Error opening config")?;
-    let config: Config = toml::from_str(&str).map_err(|_| "Error parsing config")?;
+/*
+ * Boxing errors...this allows us to return various error types.
+ *
+ * This is more helpful to debug our app than using
+ * my_operation.map_err(|_| my_test)?;
+ */
+type WrappedResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn read_config() -> WrappedResult<Config> {
+    let str = read_to_string("cfr.cfg")?;
+    let config: Config = toml::from_str(&str)?;
     Ok(config)
 }
 
-fn write_config(config: Config) {
-    match write("cfr.cfg", toml::to_string(&config).unwrap()) {
-        Err(err) => println!("ERR: {:?}", err),
-        _ => println!("OK")
-    }
+
+fn write_config(config: Config) -> WrappedResult<()> {
+    let str = toml::to_string(&config)?;
+    write("cfr.cfg", str)?;
+    Ok(())
 }
 
 fn patch_user_secret(mut src: Config, account: &str, enc_otp: &str) -> Config {
@@ -147,10 +219,10 @@ fn info_to_link(
 }
 
 #[get("/invite/<account>")]
-fn w_invite(account: String) -> Template {
+fn w_invite(account: String) -> WrappedResult<Template> {
     let clean_account = CLEAN_PATTERN.replace(&account, "").to_string();
 
-    let conn = Connection::open("./data/invites.db").unwrap();
+    let conn = Connection::open("./data/invites.db")?;
 
     // Create db if necessary
     conn.execute("CREATE TABLE IF NOT EXISTS invitees (
@@ -158,48 +230,49 @@ fn w_invite(account: String) -> Template {
         account TEXT,
         token TEXT,
         created DATETIME DEFAULT CURRENT_TIMESTAMP,
-        used BOOLEAN DEFAULT 0)", NO_PARAMS).unwrap();
+        used BOOLEAN DEFAULT 0)", NO_PARAMS)?;
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_account on invitees(account)",
-        NO_PARAMS).unwrap();
+        NO_PARAMS)?;
     // Purge old invites
     conn.execute("DELETE FROM invitees WHERE (created <= datetime('now', '-10 days'))",
-        NO_PARAMS).unwrap();
+        NO_PARAMS)?;
     let token = Uuid::new_v4().to_string();
     conn.execute("INSERT OR REPLACE INTO invitees (account, token) VALUES (?, ?)",
-        &[&clean_account, &token]).unwrap();
+        &[&clean_account, &token])?;
 
     let mut context = HashMap::new();
     context.insert("Account", clean_account);
     context.insert("Link", format!("{}/onboard/{}", HOME_URL, token));
-    Template::render("invite", &context)
+    Ok(Template::render("invite", &context))
 }
 
 #[get("/onboard/<token>")]
-fn w_onboard(token: String) -> Template {
+fn w_onboard(token: String) -> WrappedResult<Template> {
     let mut context = HashMap::new();
     context.insert("Link", format!("{}/onboardonce/{}", HOME_URL, token));
-    Template::render("onboard", &context)
+    Ok(Template::render("onboard", &context))
 }
 
 #[get("/onboardonce/<token>")]
-fn w_onboardonce(token: String) -> Template {
+fn w_onboardonce(token: String) -> WrappedResult<Template> {
     let clean_token = CLEAN_PATTERN.replace(&token, "").to_string();
 
     let mut context = HashMap::new();
 
-    let conn = Connection::open("./data/invites.db").unwrap();
+    let conn = Connection::open("./data/invites.db")?;
     match conn.query_row::<String, _, _>(
         "SELECT account FROM invitees WHERE token=? AND used=0",
         &[&clean_token],
         |row| row.get(0)
     ) {
         Err(_) => {
-            // TODO: Log
+            // TODO: IP Address
+            make_note_ctx!(NoteCat::Warn, "non_existent_invite", NoteCtx::Log("Web-Invite".to_string()));
             context.insert("ErrorMsg", "This invite does not exist and this transaction was logged.".to_string());
-            Template::render("error", &context)
+            Ok(Template::render("error", &context))
         },
         Ok(account) => {
-            let config: Config = read_config().unwrap();
+            let config: Config = read_config()?;
 
             let info = config.users.iter().filter(
                 |&user| user.name == account ).filter(
@@ -209,7 +282,7 @@ fn w_onboardonce(token: String) -> Template {
                 }).collect::<Vec<&Users>>();
             if info.is_empty() {
                 context.insert("ErrorMsg", "There is no secret available for this user name.".to_string());
-                Template::render("error", &context)
+                Ok(Template::render("error", &context))
             }
             else {
                 let secret = info[0].otpsecret.as_ref().unwrap();
@@ -219,32 +292,36 @@ fn w_onboardonce(token: String) -> Template {
                         ISSUER_NAME,
                         &account,
                         secret
-                    )).unwrap();
+                    ))?;
                 let image = code.render::<Luma<u8>>().build();
-                let mut s = String::new();
                 // Note to self:
                 // This is one way to allow myself to borrow the string's content again.
-                // If I did not create a new scope, we would have:
-                // Encoder -(owns)-> fout -(owns)-> s buffer.
                 // I hope I learn how to do this better.
+                let mut buffer: Vec<u8> = vec![];
                 {
-                    let fout = &mut BufWriter::new(unsafe { s.as_mut_vec() });
-                    png::PNGEncoder::new(fout).encode(&image, image.width(), image.height(), ColorType::Gray(8)).unwrap();
+                    let fout = &mut BufWriter::new(buffer.by_ref());
+                    png::PNGEncoder::new(fout).encode(&image, image.width(), image.height(), ColorType::Gray(8))?;
                 }
-                let enc_img = BASE64.encode(unsafe { s.as_bytes_mut() });
+                let enc_img = BASE64.encode(&buffer);
 
                 conn.execute("UPDATE invitees SET used=1 WHERE token=?",
-                             &[&clean_token]).unwrap();
+                             &[&clean_token])?;
 
                 context.insert("Img", enc_img);
-                Template::render("onboardonce", &context)
+                Ok(Template::render("onboardonce", &context))
             }
         }
     }
 }
 
-fn run_server(_: &ArgMatches, parent_logger: &slog::Logger ) {
-    let _log = parent_logger.new(o!("command" => "secret"));
+
+
+//░░░▀█▀░█▀█░█▀█░░░░░█░░░█▀▀░█░█░█▀▀░█░░░░░█▀▀░█░█░█▀█░█▀▀░▀█▀░▀█▀░█▀█░█▀█░█▀▀░░
+//░░░░█░░█░█░█▀▀░▄▄▄░█░░░█▀▀░▀▄▀░█▀▀░█░░░░░█▀▀░█░█░█░█░█░░░░█░░░█░░█░█░█░█░▀▀█░░
+//░░░░▀░░▀▀▀░▀░░░░░░░▀▀▀░▀▀▀░░▀░░▀▀▀░▀▀▀░░░▀░░░▀▀▀░▀░▀░▀▀▀░░▀░░▀▀▀░▀▀▀░▀░▀░▀▀▀░░
+
+fn run_server(_: &ArgMatches) {
+    let _log = LOG.new(o!("command" => "secret"));
 
     rocket::ignite()
         .mount("/", routes![w_invite, w_onboard, w_onboardonce])
@@ -252,74 +329,73 @@ fn run_server(_: &ArgMatches, parent_logger: &slog::Logger ) {
         .launch();
 }
 
-fn encode_user_secret(matches: &ArgMatches, parent_logger: &slog::Logger ) {
-    let _log = parent_logger.new(o!("command" => "secret"));
+fn encode_user_secret(matches: &ArgMatches) {
     let enc_otp = BASE32.encode(random_string(10).as_bytes());
 
     if let Some(account) = matches.value_of("account") {
-        debug!(_log, "encoding_secret"; "account" => account);
+        // TODO NO logger needs to be created when logging
+        make_note!(NoteCat::Debug, format!("encoding_secret for {}", account));
         match read_config() {
-            Err(_) => {
-                debug!(_log, "error_reading_config");
-                println!("Error reading config");
-            },
+            Err(_) => complain!("Error reading config"),
             Ok(config) => {
-                write_config(patch_user_secret(config, account, &enc_otp));
+                match write_config(patch_user_secret(config, account, &enc_otp)) {
+                    Ok(_) => (),
+                    Err(err) => complain!(err),
+                }
             }
         }
     }
     else {
-        debug!(_log, "encoding_secret");
+        make_note!(NoteCat::Debug, "encoding_secret");
         println!("Here is a possible configuration for a LDAP TOTP user:");
         println!("  otpsecret = {}", enc_otp);
     }
 }
 
-fn encode_user_password(matches: &ArgMatches, parent_logger: &slog::Logger ) {
-    let _log = parent_logger.new(o!("command" => "pass"));
+fn encode_user_password(matches: &ArgMatches) {
+    // Safe to unwrap because argument was declared as required
     let pass = matches.value_of("password").unwrap();
     let mut sha = Sha256::new();
     sha.input_str(pass);
     let enc_pass = sha.result_str();
 
     if let Some(account) = matches.value_of("account") {
-        debug!(_log, "encoding_pass"; "account" => account);
+        make_note!(NoteCat::Debug, "encoding_pass");
         match read_config() {
-            Err(_) => {
-                debug!(_log, "error_reading_config");
-                println!("Error reading config");
-            },
+            Err(_) => complain!("Error reading config"),
             Ok(config) => {
-                write_config(patch_user_pass(config, account, &enc_pass));
+                match write_config(patch_user_pass(config, account, &enc_pass)) {
+                    Ok(_) => (),
+                    Err(err) => complain!(err),
+                }
             }
         }
     }
     else {
-        debug!(_log, "encoding_pass");
+        make_note!(NoteCat::Debug, "encoding_pass");
         println!("Here is a possible configuration for a LDAP user:");
         println!("  passsha256 = {}", enc_pass);
     }
 }
 
 fn main() {
-    let log_path = "my.log";
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(log_path)
-        .unwrap();
 
-    let _log = slog::Logger::root(
-        slog_async::Async::new(
-                slog_term::FullFormat::new(
-                        slog_term::PlainDecorator::new(file)
-                    ).build().fuse()
-            ).build().fuse(),
-        o!()
-    );
+    // Init Logging
+    let stream: Stream<NoteData> = SINK.stream();
+    stream.subscribe(|notedata| if let Some(notedata) = notedata {
+        match notedata {
+            NoteData { cat: NoteCat::Debug, content, ctx: Some(NoteCtx::Log(log)) } =>
+                debug!(LOG, "{}:{}", log, content),
+            NoteData { cat: NoteCat::Debug, content, ctx: None } =>
+                debug!(LOG, "{}", content),
+            NoteData { cat: NoteCat::Warn, content, ctx: Some(NoteCtx::Log(log)) } =>
+                warn!(LOG, "{}:{}", log, content),
+            NoteData { cat: NoteCat::Warn, content, ctx: None } =>
+                warn!(LOG, "{}", content),
+        }
+    });
 
-    debug!(_log, "main()");
+    make_note!(NoteCat::Debug, "main()");
 
     let matches = clap::App::new("glauth thingy")
         .version("0.1.0")
@@ -353,11 +429,11 @@ fn main() {
         .get_matches();
 
     match matches.subcommand() {
-        ("serve", Some(m)) => run_server(m, &_log),
-        ("secret", Some(m)) => encode_user_secret(m, &_log),
-        ("pass", Some(m)) => encode_user_password(m, &_log),
+        ("serve", Some(m)) => run_server(m),
+        ("secret", Some(m)) => encode_user_secret(m),
+        ("pass", Some(m)) => encode_user_password(m),
         (_,_) => println!("Try 'help'"),
     }
 
-    debug!(_log, "the end");
+    make_note!(NoteCat::Debug, "the end");
 }
